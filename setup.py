@@ -304,7 +304,9 @@ def get_wheel_data():
 
 mods = [
     'pic', 'threading', 'tools', 'writer', 'player/clock', 'player/core',
-    'player/decoder', 'player/frame_queue', 'player/player', 'player/queue']
+    'player/decoder', 'player/frame_queue', 'player/player', 'player/queue',
+    'transcoder']
+
 c_options['use_sdl2_mixer'] = c_options['use_sdl2_mixer']
 
 
