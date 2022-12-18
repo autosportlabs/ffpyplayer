@@ -1,3 +1,7 @@
+# Cython implementation of video transcoding, based on example:
+# https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/transcoding.c
+
+
 cdef class Transcoder(object):
     
     cdef (AVStream *, AVCodec *, AVCodecContext *) _find_decoder(self, AVFormatContext *ifmt_ctx, int i):
@@ -74,120 +78,6 @@ cdef class Transcoder(object):
 
         av_dump_format(self.ifmt_ctx, 0, filename, 0)
         return 0
-
-    # cdef int open_output_file(self, const char *filename) nogil except 1:
-    #     cdef AVStream *out_stream
-    #     cdef AVStream *in_stream
-    #     cdef AVCodecContext *dec_ctx, *enc_ctx
-    #     cdef const AVCodec *encoder
-    #     cdef int ret
-    #     cdef unsigned int i
-
-    #     self.ofmt_ctx = NULL
-    #     avformat_alloc_output_context2(&self.ofmt_ctx, NULL, NULL, filename)
-    #     if not self.ofmt_ctx:
-    #         with gil:
-    #             print("Could not create output context")
-    #         return AVERROR_UNKNOWN
-
-    #     for i in range(self.ifmt_ctx.nb_streams):
-    #         out_stream = avformat_new_stream(self.ofmt_ctx, NULL)
-    #         if not out_stream:
-    #             with gil:
-    #                 print("Failed allocating output stream")
-    #             return AVERROR_UNKNOWN
-
-    #         in_stream = self.ifmt_ctx.streams[i]
-    #         dec_ctx = self.stream_ctx[i].dec_ctx
-
-    #         if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO or dec_ctx.codec_type == AVMEDIA_TYPE_AUDIO:
-                
-    #             # transcoding to same codec
-    #             encoder = avcodec_find_encoder(dec_ctx.codec_id)
-    #             if not encoder:
-    #                 with gil:
-    #                     print("Necessary encoder not found")
-    #                 return AVERROR_INVALIDDATA
-                
-    #             enc_ctx = avcodec_alloc_context3(encoder)
-    #             if not enc_ctx:
-    #                 with gil:
-    #                     print("Failed to allocate the encoder context")
-    #                 return AVERROR(ENOMEM)
-
-    #             # Transcoding to same properties (picture size, sample rate etc.)
-    #             # These properties can be changed for output streams easily using filters
-    #             if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
-    #                 enc_ctx.height = dec_ctx.height
-    #                 enc_ctx.width = dec_ctx.width
-    #                 enc_ctx.sample_aspect_ratio = dec_ctx.sample_aspect_ratio
-                    
-    #                 # take first format from list of supported formats
-    #                 if encoder.pix_fmts:
-    #                     enc_ctx.pix_fmt = encoder.pix_fmts[0]
-    #                 else:
-    #                     enc_ctx.pix_fmt = dec_ctx.pix_fmt
-                    
-    #                 # video time_base can be set to whatever is handy and supported by encoder
-    #                 enc_ctx.time_base = av_inv_q(dec_ctx.framerate)
-    #             else:
-    #                 enc_ctx.sample_rate = dec_ctx.sample_rate
-    #                 enc_ctx.channel_layout = dec_ctx.channel_layout
-    #                 enc_ctx.channels = av_get_channel_layout_nb_channels(enc_ctx.channel_layout)
-                    
-    #                 # take first format from list of supported formats
-    #                 enc_ctx.sample_fmt = encoder.sample_fmts[0]
-    #                 enc_ctx.time_base.num = 1
-    #                 enc_ctx.time_base.den = enc_ctx.sample_rate
-
-    #             if self.ofmt_ctx.oformat.flags and AVFMT_GLOBALHEADER:
-    #                 enc_ctx.flags = enc_ctx.flags | AV_CODEC_FLAG_GLOBAL_HEADER
-
-    #                 # Third parameter can be used to pass settings to encoder
-    #                 ret = avcodec_open2(enc_ctx, encoder, NULL)
-    #                 if ret < 0:
-    #                     with gil:
-    #                         print("Cannot open video encoder for stream #%u", i)
-    #                     return ret
-    #                 ret = avcodec_parameters_from_context(out_stream.codecpar, enc_ctx)
-    #                 if ret < 0:
-    #                     with gil:
-    #                         print("Failed to copy encoder parameters to output stream #%u", i)
-    #                     return ret
-
-    #                 out_stream.time_base = enc_ctx.time_base
-    #                 self.stream_ctx[i].enc_ctx = enc_ctx
-
-    #             elif dec_ctx.codec_type == AVMEDIA_TYPE_UNKNOWN:
-    #                 with gil:
-    #                     print("Elementary stream is of unknown type, cannot proceed #%u", i)
-    #                 return AVERROR_INVALIDDATA
-    #             else:
-    #                 ret = avcodec_parameters_copy(out_stream.codecpar, in_stream.codecpar)
-    #                 if ret < 0:
-    #                     with gil:
-    #                         print("Copying parameters for stream #%u failed", i)
-    #                     return ret
-    #                 out_stream.time_base = in_stream.time_base
-
-    #             return 0
-        
-    #     av_dump_format(self.ofmt_ctx, 0, filename, 1)
-
-    #     if not (self.ofmt_ctx.oformat.flags and AVFMT_NOFILE):
-    #         ret = avio_open(&self.ofmt_ctx.pb, filename, AVIO_FLAG_WRITE)
-    #         if ret < 0:
-    #             with gil:
-    #                 print("Could not open output file '%s'", filename)
-    #             return ret
-
-    #     ret = avformat_write_header(self.ofmt_ctx, NULL)
-    #     if ret < 0:
-    #         with gil:
-    #             print("Error occurred when opening output file")
-    #         return ret
-    #     return 0
-
 
     cdef int open_output_file(self, const char *filename) nogil except 1:
         cdef AVStream *out_stream
