@@ -1,22 +1,21 @@
 # Cython implementation of video transcoding, based on example:
 # https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/transcoding.c
+from libc.stdlib cimport malloc, free
 
 
 cdef class Transcoder(object):
     
-    cdef (AVStream *, AVCodec *, AVCodecContext *) _find_decoder(self, AVFormatContext *ifmt_ctx, int i):
-        cdef AVStream *stream = ifmt_ctx.streams[i]
-        # cdef const AVCodec *dec = avcodec_find_decoder(stream.codecpar.codec_id)
-        cdef AVCodec *dec = avcodec_find_decoder(stream.codecpar.codec_id)
-        cdef AVCodecContext *codec_ctx = NULL
-
-        return stream, dec, codec_ctx
-
     cdef int open_input_file(self, const char *filename) nogil except 1:
         cdef int ret
         cdef unsigned int i
 
         self.ifmt_ctx = NULL
+
+
+        cdef AVStream *stream
+        cdef AVCodec *dec
+        cdef AVCodecContext *codec_ctx = NULL
+
 
         ret = avformat_open_input(&self.ifmt_ctx, filename, NULL, NULL)
         if ret < 0:
@@ -31,15 +30,14 @@ cdef class Transcoder(object):
             return ret
         
         self.stream_ctx = <StreamContext *>av_calloc(self.ifmt_ctx.nb_streams, sizeof(StreamContext))
+
         if not self.stream_ctx:
             return AVERROR(ENOMEM)
         
         for i in range(self.ifmt_ctx.nb_streams):
-            with gil:
-                decoder = self._find_decoder(self.ifmt_ctx, i)
-            stream = decoder[0]
-            dec = decoder[1]
-            codec_ctx = decoder[2]
+            stream = self.ifmt_ctx.streams[i]
+            dec = avcodec_find_decoder(stream.codecpar.codec_id)
+            codec_ctx = NULL
 
             if not dec:
                 with gil:
@@ -79,7 +77,7 @@ cdef class Transcoder(object):
         av_dump_format(self.ifmt_ctx, 0, filename, 0)
         return 0
 
-    cdef int open_output_file(self, const char *filename) nogil except 1:
+    cdef int open_output_file(self, const char *filename, int output_width) nogil except 1:
         cdef AVStream *out_stream
         cdef AVStream *in_stream
         cdef AVCodecContext *dec_ctx, *enc_ctx
@@ -123,30 +121,30 @@ cdef class Transcoder(object):
                     return AVERROR(ENOMEM)
 
                 if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
-                    enc_ctx.height = dec_ctx.height
-                    enc_ctx.width = dec_ctx.width
-                    enc_ctx.sample_aspect_ratio = dec_ctx.sample_aspect_ratio
-                    
-                    if encoder.pix_fmts:
-                        enc_ctx.pix_fmt = encoder.pix_fmts[0]
-                    else:
-                        enc_ctx.pix_fmt = dec_ctx.pix_fmt
-
-                    enc_ctx.time_base = av_inv_q(dec_ctx.framerate)
+                    enc_ctx.bit_rate = 4 * 1000000  # ~ 4000 kbps
+                    enc_ctx.width = <int>output_width
+                    enc_ctx.height = <int>((enc_ctx.width * (dec_ctx.height/dec_ctx.width)) + 1) // 2 * 2
+                    enc_ctx.pix_fmt = AV_PIX_FMT_YUV420P
+                    enc_ctx.time_base = dec_ctx.time_base
+                    av_opt_set(enc_ctx.priv_data, "preset", "ultrafast", 0)
+                    av_opt_set(enc_ctx.priv_data, "profile", "baseline", 0)
+                    av_opt_set(enc_ctx.priv_data, "level", "4.0", 0)
+                    # av_opt_set(enc_ctx.priv_data, "crf", "30", 0)
 
                 else:
-                    enc_ctx.sample_rate = dec_ctx.sample_rate
-                    enc_ctx.channel_layout = dec_ctx.channel_layout
-                    enc_ctx.channels = av_get_channel_layout_nb_channels(enc_ctx.channel_layout)
-                    
                     # take first format from list of supported formats
                     enc_ctx.sample_fmt = encoder.sample_fmts[0]
+                    enc_ctx.sample_rate = dec_ctx.sample_rate
+                    enc_ctx.channel_layout = AV_CH_LAYOUT_STEREO
+                    enc_ctx.channels = 2
                     enc_ctx.time_base.num = 1
                     enc_ctx.time_base.den = enc_ctx.sample_rate
 
+                    # with gil:
+                    #     print("Audio Sample Rate", enc_ctx.sample_rate)
+
                 if self.ofmt_ctx.oformat.flags & AVFMT_GLOBALHEADER:
                     enc_ctx.flags |= AV_CODEC_FLAG_GLOBAL_HEADER
-
                 ret = avcodec_open2(enc_ctx, encoder, NULL)
                 
                 if ret < 0:
@@ -225,11 +223,12 @@ cdef class Transcoder(object):
                 self._free_filters(ret, inputs, outputs)
 
             snprintf(args, sizeof(args),
-                    "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
-                    dec_ctx.width, dec_ctx.height, dec_ctx.pix_fmt,
-                    dec_ctx.time_base.num, dec_ctx.time_base.den,
-                    dec_ctx.sample_aspect_ratio.num,
-                    dec_ctx.sample_aspect_ratio.den)
+                "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+                dec_ctx.width, dec_ctx.height, dec_ctx.pix_fmt,
+                dec_ctx.time_base.num, dec_ctx.time_base.den,
+                dec_ctx.sample_aspect_ratio.num,
+                dec_ctx.sample_aspect_ratio.den
+            )
 
             ret = avfilter_graph_create_filter(&buffersrc_ctx, buffersrc, "in", args, NULL, filter_graph)
             if ret < 0:
@@ -344,12 +343,9 @@ cdef class Transcoder(object):
         else:
             filt_frame = filter.filtered_frame
 
-        with gil:
-            print("Encoding frame")
-
         # encode filtered frame
         av_packet_unref(enc_pkt)
-        
+
         ret = avcodec_send_frame(stream.enc_ctx, filt_frame)
         
         if ret < 0:
@@ -367,9 +363,6 @@ cdef class Transcoder(object):
                                 stream.enc_ctx.time_base,
                                 self.ofmt_ctx.streams[stream_index].time_base)
             
-            with gil:
-                print("Muxing frame")
-            # mux encoded frame
             ret = av_interleaved_write_frame(self.ofmt_ctx, enc_pkt)
         
         return ret
@@ -378,11 +371,6 @@ cdef class Transcoder(object):
     cdef int filter_encode_write_frame(self, AVFrame *frame, unsigned int stream_index) nogil except 1:
         cdef FilteringContext *filter = &self.filter_ctx[stream_index]
         cdef int ret
-        
-        with gil:
-            print("Pushing decoded frame to filters")
-        
-        # push the decoded frame into the filtergraph
         ret = av_buffersrc_add_frame_flags(filter.buffersrc_ctx, frame, 0)
         if ret < 0:
             with gil:
@@ -391,8 +379,6 @@ cdef class Transcoder(object):
         
         # pull filtered frames from the filtergraph
         while True:
-            with gil:
-                print("Pulling filtered frame from filters")
             ret = av_buffersink_get_frame(filter.buffersink_ctx, filter.filtered_frame)
             if ret < 0:
 
@@ -412,11 +398,11 @@ cdef class Transcoder(object):
         return ret
 
 
-    cdef int init_filters(self) nogil except 1:
+    cdef int init_filters(self, const char *video_filters) nogil except 1:
         cdef const char *filter_spec
         cdef unsigned int i
         cdef int ret
-        self.filter_ctx = <FilteringContext *>av_malloc_array(self.ifmt_ctx.nb_streams, sizeof(self.filter_ctx))
+        self.filter_ctx = <FilteringContext *>av_calloc(self.ifmt_ctx.nb_streams, sizeof(FilteringContext))
 
         if not self.filter_ctx:
             return AVERROR(ENOMEM)
@@ -430,7 +416,8 @@ cdef class Transcoder(object):
                 continue
 
             if self.ifmt_ctx.streams[i].codecpar.codec_type == AVMEDIA_TYPE_VIDEO:
-                filter_spec = "null" # passthrough (dummy) filter for video
+                filter_spec = video_filters
+                
             else:
                 filter_spec = "anull" # passthrough (dummy) filter for audio
             ret = self.init_filter(&self.filter_ctx[i], self.stream_ctx[i].dec_ctx, self.stream_ctx[i].enc_ctx, filter_spec)
@@ -451,11 +438,11 @@ cdef class Transcoder(object):
         if not (self.stream_ctx[stream_index].enc_ctx.codec.capabilities & AV_CODEC_CAP_DELAY):
             return 0
         
-        with gil:
-            print("Flushing stream encoder", stream_index)
+        # with gil:
+        #     print("Flushing stream encoder", stream_index)
         return self.encode_write_frame(stream_index, 1)
 
-    cdef int start_transcoding(self, const char *input_file, const char *output_file) nogil except 1:
+    cdef int start_transcoding(self, const char *input_file, const char *output_file, const char *video_filters, int output_width) nogil except 1:
         cdef int ret
         cdef AVPacket *packet = NULL
         cdef unsigned int stream_index
@@ -463,15 +450,19 @@ cdef class Transcoder(object):
 
         cdef StreamContext *stream
 
+        cdef int frame_count = 0
+        cdef float time_stamp = 0.0
+        cdef float division_factor = 0.0
+
         ret = self.open_input_file(input_file)
         if ret < 0:
             self._end(ret, packet)
 
-        ret = self.open_output_file(output_file)
+        ret = self.open_output_file(output_file, output_width)
         if ret < 0:
             self._end(ret, packet)
 
-        ret = self.init_filters()
+        ret = self.init_filters(video_filters)
         if ret < 0:
             self._end(ret, packet)
         
@@ -485,15 +476,11 @@ cdef class Transcoder(object):
                 break
 
             stream_index = packet.stream_index
-            with gil:
-                print("Demuxer gave frame of stream_index", stream_index)
 
             if self.filter_ctx[stream_index].filter_graph:
-                # StreamContext *stream = &self.stream_ctx[stream_index]
                 stream = &self.stream_ctx[stream_index]
+                division_factor = <float>stream.dec_ctx.framerate.num // 30
 
-                with gil:
-                    print("Going to reencode&filter the frame")
 
                 av_packet_rescale_ts(packet, self.ifmt_ctx.streams[stream_index].time_base, stream.dec_ctx.time_base)
                 ret = avcodec_send_packet(stream.dec_ctx, packet)
@@ -509,12 +496,19 @@ cdef class Transcoder(object):
                         break
                     elif ret < 0:
                         self._end(ret, packet)
+                    
+                    else:
+                        #video
+                        if stream_index == 0:
+                            frame_count += 1
+                            time_stamp = <float>(frame_count * 1/2.5)
 
-                    stream.dec_frame.pts = stream.dec_frame.best_effort_timestamp
+                        if (stream_index == 0 and (stream.dec_ctx.framerate.num < 31 or time_stamp % division_factor == 0)) or stream_index == 1:
+                            stream.dec_frame.pts = stream.dec_frame.best_effort_timestamp
+                            ret = self.filter_encode_write_frame(stream.dec_frame, stream_index)
+                            if ret < 0:
+                                self._end(ret, packet)
 
-                    ret = self.filter_encode_write_frame(stream.dec_frame, stream_index)
-                    if ret < 0:
-                        self._end(ret, packet)
             else:
                 av_packet_rescale_ts(packet,
                                     self.ifmt_ctx.streams[stream_index].time_base,
@@ -569,15 +563,24 @@ cdef class Transcoder(object):
 
         if ret:
             with gil:
-                print("Error occurred")
+                print(f"Error occurred: {av_err2str(ret)}")
             return 1
 
         return 0
 
 
-def transcode(input_file="", output_file=""):
+def transcode(input_file="", output_file="", output_width=720):
     if not input_file or not output_file:
         raise ValueError("Input file and/or output file not specified")
     
+    output_width = int(output_width)
+    
+    video_filters = f"scale={output_width}:-1"
+    
     transcoder = Transcoder()
-    transcoder.start_transcoding(input_file.encode('utf-8'), output_file.encode('utf-8'))
+    transcoder.start_transcoding(
+        input_file.encode('utf-8'),
+        output_file.encode('utf-8'),
+        video_filters.encode('utf-8'),
+        output_width
+    )
