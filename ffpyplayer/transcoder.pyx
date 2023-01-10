@@ -564,13 +564,13 @@ cdef class Transcoder(object):
 
 def transcode(input_file="", output_file="", output_width=720, output_bitrate=4000):
     """
-    Transcode a video file from one format to another.
+    Transcode a video from one format to another with configuration modifications.
 
     Parameters:
-        
-        input_file (str): The file path of the input video.
+    
+        input_file(str): The file path of the input video.
 
-        output_file (str): The file path of the output video. Default is an empty string.
+        output_file(str): The file path of the output video.
 
         output_width (int): The width of the output video in pixels. Default is 720.
 
