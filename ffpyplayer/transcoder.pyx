@@ -77,7 +77,7 @@ cdef class Transcoder(object):
         av_dump_format(self.ifmt_ctx, 0, filename, 0)
         return 0
 
-    cdef int open_output_file(self, const char *filename, int output_width) nogil except 1:
+    cdef int open_output_file(self, const char *filename, int output_width, int output_bitrate) nogil except 1:
         cdef AVStream *out_stream
         cdef AVStream *in_stream
         cdef AVCodecContext *dec_ctx, *enc_ctx
@@ -121,7 +121,7 @@ cdef class Transcoder(object):
                     return AVERROR(ENOMEM)
 
                 if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
-                    enc_ctx.bit_rate = 4 * 1000000  # ~ 4000 kbps
+                    enc_ctx.bit_rate = <int>output_bitrate * 1000  # ~ 4000 kbps
                     enc_ctx.width = <int>output_width
                     enc_ctx.height = <int>((enc_ctx.width * (dec_ctx.height/dec_ctx.width)) + 1) // 2 * 2
                     enc_ctx.pix_fmt = AV_PIX_FMT_YUV420P
@@ -139,9 +139,6 @@ cdef class Transcoder(object):
                     enc_ctx.channels = 2
                     enc_ctx.time_base.num = 1
                     enc_ctx.time_base.den = enc_ctx.sample_rate
-
-                    # with gil:
-                    #     print("Audio Sample Rate", enc_ctx.sample_rate)
 
                 if self.ofmt_ctx.oformat.flags & AVFMT_GLOBALHEADER:
                     enc_ctx.flags |= AV_CODEC_FLAG_GLOBAL_HEADER
@@ -433,16 +430,12 @@ cdef class Transcoder(object):
                 return AVERROR(ENOMEM)
         return 0
 
-
     cdef int flush_encoder(self, unsigned int stream_index) nogil except 1:
         if not (self.stream_ctx[stream_index].enc_ctx.codec.capabilities & AV_CODEC_CAP_DELAY):
             return 0
-        
-        # with gil:
-        #     print("Flushing stream encoder", stream_index)
         return self.encode_write_frame(stream_index, 1)
 
-    cdef int start_transcoding(self, const char *input_file, const char *output_file, const char *video_filters, int output_width) nogil except 1:
+    cdef int start_transcoding(self, const char *input_file, const char *output_file, const char *video_filters, int output_width, int output_bitrate) nogil except 1:
         cdef int ret
         cdef AVPacket *packet = NULL
         cdef unsigned int stream_index
@@ -458,7 +451,7 @@ cdef class Transcoder(object):
         if ret < 0:
             self._end(ret, packet)
 
-        ret = self.open_output_file(output_file, output_width)
+        ret = self.open_output_file(output_file, output_width, output_bitrate)
         if ret < 0:
             self._end(ret, packet)
 
@@ -569,7 +562,23 @@ cdef class Transcoder(object):
         return 0
 
 
-def transcode(input_file="", output_file="", output_width=720):
+def transcode(input_file="", output_file="", output_width=720, output_bitrate=4000):
+    """
+    Transcode a video file from one format to another.
+
+    Parameters:
+        
+        input_file (str): The file path of the input video.
+
+        output_file (str): The file path of the output video. Default is an empty string.
+
+        output_width (int): The width of the output video in pixels. Default is 720.
+
+        output_bitrate (int): The bitrate of the output video in kilobits per second. Default is 4000.
+
+    Returns: None
+
+    """
     if not input_file or not output_file:
         raise ValueError("Input file and/or output file not specified")
     
@@ -582,5 +591,6 @@ def transcode(input_file="", output_file="", output_width=720):
         input_file.encode('utf-8'),
         output_file.encode('utf-8'),
         video_filters.encode('utf-8'),
-        output_width
+        output_width,
+        output_bitrate
     )

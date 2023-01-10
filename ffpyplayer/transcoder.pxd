@@ -47,7 +47,7 @@ cdef class Transcoder(object):
     cdef int _free_filters(self, int ret, AVFilterInOut *inputs, AVFilterInOut *outputs) nogil except 1
 
     cdef int open_input_file(self, const char *filename) nogil except 1
-    cdef int open_output_file(self, const char *filename, int output_width) nogil except 1
+    cdef int open_output_file(self, const char *filename, int output_width, int output_bitrate) nogil except 1
     cdef int init_filter(self, FilteringContext* fctx, AVCodecContext *dec_ctx,
         AVCodecContext *enc_ctx, const char *filter_spec) nogil except 1
     cdef int init_filters(self, const char *video_filters) nogil except 1
@@ -55,4 +55,4 @@ cdef class Transcoder(object):
     cdef int filter_encode_write_frame(self, AVFrame *frame, unsigned int stream_index) nogil except 1
     cdef int flush_encoder(self, unsigned int stream_index) nogil except 1
 
-    cdef int start_transcoding(self, const char *input_file, const char *output_file, const char *video_filters, int output_width) nogil except 1
+    cdef int start_transcoding(self, const char *input_file, const char *output_file, const char *video_filters, int output_width, int output_bitrate) nogil except 1
