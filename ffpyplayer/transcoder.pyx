@@ -142,11 +142,11 @@ cdef class Transcoder(object):
 
                 if self.ofmt_ctx.oformat.flags & AVFMT_GLOBALHEADER:
                     enc_ctx.flags |= AV_CODEC_FLAG_GLOBAL_HEADER
+
                 ret = avcodec_open2(enc_ctx, encoder, NULL)
-                
                 if ret < 0:
                     with gil:
-                        print("Cannot open video encoder for stream", i)
+                        print("Cannot open video encoder for stream", i, {av_err2str(ret)})
                     return ret
                 
                 ret = avcodec_parameters_from_context(out_stream.codecpar, enc_ctx)
