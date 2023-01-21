@@ -35,6 +35,8 @@ cdef extern from "errno.h" nogil:
 cdef extern from "libavutil/error.h":
     char* av_err2str(int errnum)
 
+cdef extern from "math.h" nogil:
+    double ceil(double x)
 
 cdef class Transcoder(object):
 

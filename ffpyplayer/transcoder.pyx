@@ -94,8 +94,11 @@ cdef class Transcoder(object):
                 print("Could not create output context")
             return AVERROR_UNKNOWN
 
-        # cdef unsigned int i
         for i in range(self.ifmt_ctx.nb_streams):
+            dec_ctx = self.stream_ctx[i].dec_ctx
+            if not (dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO or dec_ctx.codec_type == AVMEDIA_TYPE_AUDIO):
+                continue
+
             out_stream = avformat_new_stream(self.ofmt_ctx, NULL)
             if not out_stream:
                 with gil:
@@ -103,72 +106,58 @@ cdef class Transcoder(object):
                 return AVERROR_UNKNOWN
 
             in_stream = self.ifmt_ctx.streams[i]
-            dec_ctx = self.stream_ctx[i].dec_ctx
 
 
-            if (dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO or dec_ctx.codec_type == AVMEDIA_TYPE_AUDIO):
-                encoder = avcodec_find_encoder(dec_ctx.codec_id)
-                if not encoder:
-                    with gil:
-                        print("Necessary encoder not found")
-                    return AVERROR_INVALIDDATA
-                
-                enc_ctx = avcodec_alloc_context3(encoder)
-                
-                if not enc_ctx:
-                    with gil:
-                        print("Failed to allocate the encoder context")
-                    return AVERROR(ENOMEM)
-
-                if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
-                    enc_ctx.bit_rate = <int>output_bitrate * 1000  # ~ 4000 kbps
-                    enc_ctx.width = <int>output_width
-                    enc_ctx.height = <int>((enc_ctx.width * (dec_ctx.height/dec_ctx.width)) + 1) // 2 * 2
-                    enc_ctx.pix_fmt = AV_PIX_FMT_YUV420P
-                    enc_ctx.time_base = dec_ctx.time_base
-                    av_opt_set(enc_ctx.priv_data, "preset", "ultrafast", 0)
-                    av_opt_set(enc_ctx.priv_data, "profile", "baseline", 0)
-                    av_opt_set(enc_ctx.priv_data, "level", "4.0", 0)
-                    # av_opt_set(enc_ctx.priv_data, "crf", "30", 0)
-
-                else:
-                    # take first format from list of supported formats
-                    enc_ctx.sample_fmt = encoder.sample_fmts[0]
-                    enc_ctx.sample_rate = dec_ctx.sample_rate
-                    enc_ctx.channel_layout = AV_CH_LAYOUT_STEREO
-                    enc_ctx.channels = 2
-                    enc_ctx.time_base.num = 1
-                    enc_ctx.time_base.den = enc_ctx.sample_rate
-
-                if self.ofmt_ctx.oformat.flags & AVFMT_GLOBALHEADER:
-                    enc_ctx.flags |= AV_CODEC_FLAG_GLOBAL_HEADER
-
-                ret = avcodec_open2(enc_ctx, encoder, NULL)
-                if ret < 0:
-                    with gil:
-                        print("Cannot open video encoder for stream", i, {av_err2str(ret)})
-                    return ret
-                
-                ret = avcodec_parameters_from_context(out_stream.codecpar, enc_ctx)
-                if ret < 0:
-                    with gil:
-                        print("Failed to copy encoder parameters to output stream", i)
-                    return ret
-
-                out_stream.time_base = enc_ctx.time_base
-                self.stream_ctx[i].enc_ctx = enc_ctx
-
-            elif dec_ctx.codec_type == AVMEDIA_TYPE_UNKNOWN:
+            encoder = avcodec_find_encoder(dec_ctx.codec_id)
+            if not encoder:
                 with gil:
-                    print("Elementary stream #%d is of unknown type, cannot proceed", i)
+                    print("Necessary encoder not found")
                 return AVERROR_INVALIDDATA
+            
+            enc_ctx = avcodec_alloc_context3(encoder)
+            
+            if not enc_ctx:
+                with gil:
+                    print("Failed to allocate the encoder context")
+                return AVERROR(ENOMEM)
+
+            if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
+                enc_ctx.bit_rate = <int>output_bitrate * 1000  # ~ 4000 kbps
+                enc_ctx.width = <int>output_width
+                enc_ctx.height = <int>((enc_ctx.width * (dec_ctx.height/dec_ctx.width)) + 1) // 2 * 2
+                enc_ctx.pix_fmt = AV_PIX_FMT_YUV420P
+                enc_ctx.time_base = dec_ctx.time_base
+                av_opt_set(enc_ctx.priv_data, "preset", "ultrafast", 0)
+                av_opt_set(enc_ctx.priv_data, "profile", "baseline", 0)
+                av_opt_set(enc_ctx.priv_data, "level", "4.0", 0)
+                # av_opt_set(enc_ctx.priv_data, "crf", "30", 0)
+
             else:
-                ret = avcodec_parameters_copy(out_stream.codecpar, in_stream.codecpar)
-                if ret < 0:
-                    with gil:
-                        print("Copying parameters for stream failed", i)
-                    return ret
-                out_stream.time_base = in_stream.time_base
+                # take first format from list of supported formats
+                enc_ctx.sample_fmt = encoder.sample_fmts[0]
+                enc_ctx.sample_rate = dec_ctx.sample_rate
+                enc_ctx.channel_layout = AV_CH_LAYOUT_STEREO
+                enc_ctx.channels = 2
+                enc_ctx.time_base.num = 1
+                enc_ctx.time_base.den = enc_ctx.sample_rate
+
+            if self.ofmt_ctx.oformat.flags & AVFMT_GLOBALHEADER:
+                enc_ctx.flags |= AV_CODEC_FLAG_GLOBAL_HEADER
+
+            ret = avcodec_open2(enc_ctx, encoder, NULL)
+            if ret < 0:
+                with gil:
+                    print("Cannot open video encoder for stream", i, {av_err2str(ret)})
+                return ret
+            
+            ret = avcodec_parameters_from_context(out_stream.codecpar, enc_ctx)
+            if ret < 0:
+                with gil:
+                    print("Failed to copy encoder parameters to output stream", i)
+                return ret
+
+            out_stream.time_base = enc_ctx.time_base
+            self.stream_ctx[i].enc_ctx = enc_ctx
 
         av_dump_format(self.ofmt_ctx, 0, filename, 1)
 
@@ -443,7 +432,7 @@ cdef class Transcoder(object):
 
         cdef StreamContext *stream
 
-        cdef int frame_count = 0
+        cdef int frame_number = 0
         cdef float time_stamp = 0.0
         cdef float division_factor = 0.0
 
@@ -469,11 +458,16 @@ cdef class Transcoder(object):
                 break
 
             stream_index = packet.stream_index
+            dec_ctx = self.stream_ctx[stream_index].dec_ctx
+
+            if not (dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO or dec_ctx.codec_type == AVMEDIA_TYPE_AUDIO):
+                continue
 
             if self.filter_ctx[stream_index].filter_graph:
                 stream = &self.stream_ctx[stream_index]
-                division_factor = <float>stream.dec_ctx.framerate.num // 30
 
+                if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
+                    division_factor = ceil(<double>(stream.dec_ctx.framerate.num / stream.dec_ctx.framerate.den / 30))
 
                 av_packet_rescale_ts(packet, self.ifmt_ctx.streams[stream_index].time_base, stream.dec_ctx.time_base)
                 ret = avcodec_send_packet(stream.dec_ctx, packet)
@@ -491,12 +485,17 @@ cdef class Transcoder(object):
                         self._end(ret, packet)
                     
                     else:
-                        #video
-                        if stream_index == 0:
-                            frame_count += 1
-                            time_stamp = <float>(frame_count * 1/2.5)
+                        if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
+                            frame_number += 1
+                            # time_stamp = <float>(frame_number * 1/2.5)
 
-                        if (stream_index == 0 and (stream.dec_ctx.framerate.num < 31 or time_stamp % division_factor == 0)) or stream_index == 1:
+                        if (
+                                (
+                                    dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO
+                                    and (stream.dec_ctx.framerate.num < 31 or frame_number % division_factor == 0)
+                                )
+                                or dec_ctx.codec_type == AVMEDIA_TYPE_AUDIO
+                            ):
                             stream.dec_frame.pts = stream.dec_frame.best_effort_timestamp
                             ret = self.filter_encode_write_frame(stream.dec_frame, stream_index)
                             if ret < 0:
