@@ -84,7 +84,8 @@ cdef class Transcoder(object):
         cdef const AVCodec *encoder
         cdef int ret
         cdef unsigned int i
-        
+        cdef int new_height
+
 
         self.ofmt_ctx = NULL
         avformat_alloc_output_context2(&self.ofmt_ctx, NULL, NULL, filename)
@@ -124,7 +125,12 @@ cdef class Transcoder(object):
             if dec_ctx.codec_type == AVMEDIA_TYPE_VIDEO:
                 enc_ctx.bit_rate = <int>output_bitrate * 1000  # ~ 4000 kbps
                 enc_ctx.width = <int>output_width
-                enc_ctx.height = <int>((enc_ctx.width * (dec_ctx.height/dec_ctx.width)) + 1) // 2 * 2
+
+                new_height = (dec_ctx.height * enc_ctx.width) // dec_ctx.width
+                if new_height % 2 != 0:
+                    new_height += 1
+                enc_ctx.height = new_height
+
                 enc_ctx.pix_fmt = AV_PIX_FMT_YUV420P
                 enc_ctx.time_base = dec_ctx.time_base
                 av_opt_set(enc_ctx.priv_data, "preset", "ultrafast", 0)
@@ -403,12 +409,10 @@ cdef class Transcoder(object):
 
             if self.ifmt_ctx.streams[i].codecpar.codec_type == AVMEDIA_TYPE_VIDEO:
                 filter_spec = video_filters
-                
-            else:
-                filter_spec = "anull" # passthrough (dummy) filter for audio
-            ret = self.init_filter(&self.filter_ctx[i], self.stream_ctx[i].dec_ctx, self.stream_ctx[i].enc_ctx, filter_spec)
-            if ret:
-                return ret
+
+                ret = self.init_filter(&self.filter_ctx[i], self.stream_ctx[i].dec_ctx, self.stream_ctx[i].enc_ctx, filter_spec)
+                if ret:
+                    return ret
 
             self.filter_ctx[i].enc_pkt = av_packet_alloc()
             if not self.filter_ctx[i].enc_pkt:
