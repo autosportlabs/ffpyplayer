@@ -586,7 +586,9 @@ def transcode(input_file="", output_file="", output_width=720, output_bitrate=40
         raise ValueError("Input file and/or output file not specified")
     
     output_width = int(output_width)
-    
+    if output_width % 2 != 0:
+        output_width += 1
+
     video_filters = f"scale={output_width}:-1"
     
     transcoder = Transcoder()
