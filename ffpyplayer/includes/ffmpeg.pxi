@@ -25,6 +25,10 @@ cdef:
             int size
             int stream_index
             int flags
+        AVPacket *av_packet_alloc()
+        void av_packet_free(AVPacket **pkt)
+        void av_packet_rescale_ts(AVPacket *pkt, AVRational tb_src, AVRational tb_dst)
+
         enum AVMediaType:
             AVMEDIA_TYPE_UNKNOWN = -1,  #///< Usually treated as AVMEDIA_TYPE_DATA
             AVMEDIA_TYPE_VIDEO,
@@ -44,7 +48,9 @@ cdef:
 
     extern from "libavformat/avio.h" nogil:
         int AVIO_FLAG_WRITE
+        int avio_closep(AVIOContext **s)
         int avio_check(const char *, int)
+        int avio_open(AVIOContext **s, const char *url, int flags)
         int avio_open2(AVIOContext **, const char *, int, const AVIOInterruptCB *,
                        AVDictionary **)
         int avio_close(AVIOContext *)
@@ -59,6 +65,14 @@ cdef:
 
     extern from "libavutil/eval.h" nogil:
         double av_strtod(const char *, char **)
+    
+    extern from "libavutil/mem.h" nogil:
+        void *av_calloc(size_t nmemb, size_t size)
+        void *av_malloc_array(size_t nmemb, size_t size)
+    
+    extern from "libavutil/avutil.h":
+        cdef int AVERROR_UNKNOWN
+        cdef int AVERROR_INVALIDDATA
 
     extern from "libavutil/avstring.h" nogil:
          size_t av_strlcpy(char *, const char *, size_t)
@@ -67,9 +81,19 @@ cdef:
 
     extern from "libavutil/display.h" nogil:
         double av_display_rotation_get (const int32_t [])
+    
+    cdef extern from "libavutil/common.h":
+        cdef enum AVRounding:
+            AV_ROUND_ZERO = 0
+            AV_ROUND_INF = 1
+            AV_ROUND_DOWN = 2
+            AV_ROUND_UP = 3
+            AV_ROUND_NEAR_INF = 5
+            AV_ROUND_PASS_MINMAX = 8191
 
     extern from "libavutil/mathematics.h" nogil:
         int64_t av_rescale_q(int64_t, AVRational, AVRational)
+        int64_t av_rescale_q_rnd(int64_t a, AVRational bq, AVRational cq, AVRounding rnd)
 
     extern from "libavutil/pixdesc.h" nogil:
         struct AVPixFmtDescriptor:
@@ -133,11 +157,16 @@ cdef:
         int av_clip(int a, int amin, int amax)
         int64_t AV_CH_LAYOUT_STEREO_DOWNMIX
 
+        int64_t AV_CH_LAYOUT_STEREO
+        int64_t AV_CH_LAYOUT_MONO
+
         struct AVRational:
             int num #///< numerator
             int den #///< denominator
         double av_q2d(AVRational)
+        AVRational av_inv_q(AVRational q)
         int av_find_nearest_q_idx(AVRational, const AVRational*)
+        AVRational av_make_q (int num, int den)
 
         int AV_LOG_QUIET
         int AV_LOG_PANIC
@@ -216,6 +245,8 @@ cdef:
         int AVFMT_NOTIMESTAMPS
         int AVFMT_NOFILE
         int AVFMT_RAWPICTURE
+        int AVSEEK_FLAG_BACKWARD
+
         struct AVChapter:
             int id
             AVRational time_base
@@ -230,6 +261,7 @@ cdef:
             const char *name
             const char *long_name
             const char *extensions
+            int av_seek_frame (AVFormatContext *s, int stream_index, int64_t timestamp, int flags)
         struct AVCodecTag:
             pass
         struct AVOutputFormat:
@@ -388,6 +420,7 @@ cdef:
             const AVRational *supported_framerates
             const AVPixelFormat *pix_fmts
             AVMediaType type
+            AVSampleFormat *sample_fmts
         struct AVCodecContext:
             int width
             int height
@@ -410,6 +443,9 @@ cdef:
             AVPixelFormat pix_fmt
             AVFrame *coded_frame
             AVRational pkt_timebase
+            AVRational framerate
+            void *priv_data
+            int64_t bit_rate
         struct AVCodecParameters:
             AVCodecID codec_id
             AVMediaType codec_type
@@ -444,6 +480,7 @@ cdef:
             int channels
             int64_t pkt_pos
             AVBufferRef **buf
+            int64_t	pkt_duration
         struct AVPicture:
             uint8_t **data
             int *linesize
@@ -462,6 +499,7 @@ cdef:
             SUBTITLE_BITMAP
             SUBTITLE_TEXT
             SUBTITLE_ASS
+        int avcodec_parameters_copy(AVCodecParameters *dst, const AVCodecParameters *src)
         AVRational av_codec_get_pkt_timebase(const AVCodecContext *)
         int64_t av_frame_get_best_effort_timestamp(const AVFrame *)
         int av_codec_get_max_lowres(const AVCodec *)
@@ -488,6 +526,8 @@ cdef:
         enum AVCodecID:
             AV_CODEC_ID_NONE
             AV_CODEC_ID_RAWVIDEO
+            AV_CODEC_ID_MP3
+            AV_CODEC_ID_H264
         AVCodec *avcodec_find_decoder(AVCodecID)
         AVCodec *avcodec_find_encoder(AVCodecID)
         AVCodec *avcodec_find_encoder_by_name(const char *)
@@ -562,9 +602,11 @@ cdef:
         int av_buffersink_get_sample_rate(const AVFilterContext *)
         int av_buffersink_get_channels(const AVFilterContext *)
         uint64_t av_buffersink_get_channel_layout(const AVFilterContext *)
+        int av_buffersink_get_frame(AVFilterContext *ctx, AVFrame *frame)
 
     extern from "libavfilter/buffersrc.h" nogil:
         int av_buffersrc_add_frame(AVFilterContext *, AVFrame *)
+        int av_buffersrc_add_frame_flags (AVFilterContext *buffer_src, AVFrame *frame, int flags)
 
     extern from "clib/misc.h" nogil:
         uint8_t INDENT
